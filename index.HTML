@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Biodigester Temperature Loss Calculator</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    .popover { display:none; position:absolute; z-index:50; background:#0f172a; color:#e6eef8; padding:0.6rem; border-radius:0.5rem; width:20rem; box-shadow:0 10px 30px rgba(2,6,23,0.6); }
+    .popover.show { display:block; }
+    .layer-card { background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); }
+  </style>
+</head>
+<body class="bg-slate-900 text-slate-100 p-6 min-h-screen">
+  <div class="max-w-6xl mx-auto space-y-6">
+    <header>
+      <h1 class="text-3xl font-semibold">Biodigester Temperature Loss Calculator</h1>
+      <p class="text-slate-400">Estimate slurry temperature drop over time with insulation at high altitude. Two separate charts show hourly and daily temperature decay.</p>
+    </header>
+
+    <main class="grid gap-6 md:grid-cols-2">
+      <!-- LEFT: Inputs -->
+      <section class="p-6 rounded-xl bg-slate-800/40 border border-slate-700">
+        <h2 class="text-xl mb-4">Inputs & Layers</h2>
+
+        <div class="grid gap-3">
+          <div class="flex items-center gap-3">
+            <label class="w-44">Initial slurry temp (°C)</label>
+            <input id="t_in" type="number" value="35" class="flex-1 p-2 rounded bg-slate-900" />
+            <button class="info-btn" data-info="t_in">?</button>
+          </div>
+
+          <div class="flex items-center gap-3">
+            <label class="w-44">Ambient temp (°C)</label>
+            <input id="t_out" type="number" value="-5" class="flex-1 p-2 rounded bg-slate-900" />
+            <button class="info-btn" data-info="t_out">?</button>
+          </div>
+
+          <div class="flex items-center gap-3">
+            <label class="w-44">Surface area (m²)</label>
+            <input id="area" type="number" value="10" class="flex-1 p-2 rounded bg-slate-900" />
+            <button class="info-btn" data-info="area">?</button>
+          </div>
+
+          <div class="flex items-center gap-3">
+            <label class="w-44">Volume (m³)</label>
+            <input id="volume" type="number" value="5" class="flex-1 p-2 rounded bg-slate-900" />
+            <button class="info-btn" data-info="volume">?</button>
+          </div>
+
+          <div class="flex items-center gap-3">
+            <label class="w-44">Internal h (W/m²·K)</label>
+            <input id="h_in" type="number" value="50" class="flex-1 p-2 rounded bg-slate-900" />
+            <button class="info-btn" data-info="h_in">?</button>
+          </div>
+
+          <div class="flex items-center gap-3">
+            <label class="w-44">External h (W/m²·K)</label>
+            <input id="h_out" type="number" value="10" class="flex-1 p-2 rounded bg-slate-900" />
+            <button class="info-btn" data-info="h_out">?</button>
+          </div>
+
+          <div class="flex items-center gap-3">
+            <label class="w-44">Density (kg/m³)</label>
+            <input id="density" type="number" value="1000" class="flex-1 p-2 rounded bg-slate-900" />
+            <button class="info-btn" data-info="density">?</button>
+          </div>
+
+          <div class="flex items-center gap-3">
+            <label class="w-44">Specific heat c (J/kg·K)</label>
+            <input id="cp" type="number" value="4186" class="flex-1 p-2 rounded bg-slate-900" />
+            <button class="info-btn" data-info="cp">?</button>
+          </div>
+
+        </div>
+
+        <hr class="my-4 border-slate-700" />
+
+        <div>
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="text-lg">Insulation layers</h3>
+            <div class="flex gap-2">
+              <button id="addLayer" class="px-3 py-1 rounded bg-emerald-500 text-slate-900">+ Add</button>
+              <button id="resetLayers" class="px-3 py-1 rounded bg-slate-700">Reset</button>
+            </div>
+          </div>
+
+          <div id="layers" class="space-y-3"></div>
+        </div>
+
+        <div class="mt-4 grid grid-cols-2 gap-3">
+          <button id="calcBtn" class="col-span-2 px-4 py-2 bg-indigo-500 rounded">Calculate & Show Charts</button>
+          <button id="exportCsv" class="px-4 py-2 bg-slate-700 rounded">Export CSV</button>
+          <button id="downloadJson" class="px-4 py-2 bg-slate-700 rounded">Download JSON</button>
+        </div>
+
+      </section>
+
+      <!-- RIGHT: Charts -->
+      <section class="p-6 rounded-xl bg-slate-800/40 border border-slate-700">
+        <h2 class="text-xl mb-2">Charts</h2>
+        <p class="text-slate-400 text-sm mb-4">Left: hourly (0–24 h). Right: daily (0–30 d). Use the inputs to change the simulation.</p>
+
+        <div class="grid gap-6 md:grid-cols-2">
+          <div>
+            <h4 class="text-sm mb-2">Hourly (hours)</h4>
+            <canvas id="hourChart" height="220"></canvas>
+          </div>
+          <div>
+            <h4 class="text-sm mb-2">Daily (days)</h4>
+            <canvas id="dayChart" height="220"></canvas>
+          </div>
+        </div>
+
+        <hr class="my-4 border-slate-700" />
+        <div id="summary" class="text-sm text-slate-300"></div>
+      </section>
+    </main>
+  </div>
+
+  <div id="popover" class="popover" role="dialog" aria-hidden="true"></div>
+
+  <script>
+    // defaults
+    const defaultLayers = [
+      { name: 'Polyurethane foam', k: 0.025, thickness_mm: 50 },
+      { name: 'Glass wool', k: 0.035, thickness_mm: 50 }
+    ];
+
+    const infoTexts = {
+      t_in: 'Initial slurry temperature inside the digester (°C). Typical mesophilic range 30–40°C.',
+      t_out: 'Ambient air temperature outside the insulation (°C). High-altitude sites can be below 0°C.',
+      area: 'Surface area through which heat is lost (m²). For a cylinder: lateral area = π·D·L.',
+      volume: 'Slurry volume in cubic meters (m³). Used to calculate mass (ρ·V).',
+      h_in: 'Internal convective heat transfer coefficient (W/m²·K). Use 20–100 depending on mixing.',
+      h_out: 'External convective coefficient (W/m²·K). Windy, cold conditions increase this value; typical 5–25.',
+      density: 'Material density for slurry (kg/m³). Water-like slurries ~1000 kg/m³.',
+      cp: 'Specific heat capacity of slurry (J/kg·K). Water is ~4186 J/kg·K.'
+    };
+
+    // state
+    let layers = JSON.parse(JSON.stringify(defaultLayers));
+    const layersContainer = document.getElementById('layers');
+
+    function renderLayers(){
+      layersContainer.innerHTML = '';
+      layers.forEach((L, idx) => {
+        const card = document.createElement('div');
+        card.className = 'p-3 rounded-lg border border-slate-700 layer-card flex flex-col gap-2';
+        card.innerHTML = `
+          <div class="flex items-center justify-between">
+            <strong class="truncate">Layer ${idx+1}: <span class="layer-title">${escapeHtml(L.name)}</span></strong>
+            <div class="flex gap-2">
+              <button class="edit-layer px-2 py-1 text-sm rounded bg-slate-700">Edit</button>
+              <button class="remove-layer px-2 py-1 text-sm rounded bg-red-600">Remove</button>
+            </div>
+          </div>
+          <div class="grid md:grid-cols-3 gap-2 mt-2">
+            <input class="layer-name p-2 bg-slate-900 rounded" value="${escapeHtml(L.name)}" placeholder="Material name" />
+            <input class="layer-k p-2 bg-slate-900 rounded" type="number" step="0.001" value="${L.k}" placeholder="k (W/m·K)" />
+            <input class="layer-t p-2 bg-slate-900 rounded" type="number" step="0.1" value="${L.thickness_mm}" placeholder="Thickness (mm)" />
+          </div>
+        `;
+
+        // handlers
+        card.querySelector('.remove-layer').addEventListener('click', ()=>{ layers.splice(idx,1); renderLayers(); });
+        card.querySelector('.layer-name').addEventListener('input', (e)=>{ layers[idx].name = e.target.value; card.querySelector('.layer-title').innerText = e.target.value; });
+        card.querySelector('.layer-k').addEventListener('input', (e)=>{ layers[idx].k = parseFloat(e.target.value) || 0; });
+        card.querySelector('.layer-t').addEventListener('input', (e)=>{ layers[idx].thickness_mm = parseFloat(e.target.value) || 0; });
+
+        layersContainer.appendChild(card);
+      });
+    }
+
+    // helpers
+    function escapeHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+    document.getElementById('addLayer').addEventListener('click', ()=>{ layers.push({ name:'New layer', k:0.04, thickness_mm:25 }); renderLayers(); });
+    document.getElementById('resetLayers').addEventListener('click', ()=>{ layers = JSON.parse(JSON.stringify(defaultLayers)); renderLayers(); });
+
+    // popover info
+    const popover = document.getElementById('popover');
+    document.body.addEventListener('click', (e)=>{
+      if(e.target.matches('.info-btn')){
+        const key = e.target.dataset.info;
+        popover.textContent = infoTexts[key] || '';
+        const rect = e.target.getBoundingClientRect();
+        popover.style.top = (rect.bottom + window.scrollY + 8) + 'px';
+        popover.style.left = Math.max(8, rect.left + window.scrollX - 40) + 'px';
+        popover.classList.add('show');
+        popover.setAttribute('aria-hidden','false');
+      } else if(!e.target.closest('.popover')){
+        popover.classList.remove('show');
+        popover.setAttribute('aria-hidden','true');
+      }
+    });
+
+    // initial render
+    renderLayers();
+
+    // Charts
+    let hourChart, dayChart;
+
+    function computeAndPlot(){
+      // read main inputs
+      const T_in = parseFloat(document.getElementById('t_in').value) || 0;
+      const T_out = parseFloat(document.getElementById('t_out').value) || 0;
+      const A = Math.max(0.0001, parseFloat(document.getElementById('area').value) || 1);
+      const V = Math.max(0, parseFloat(document.getElementById('volume').value) || 0);
+      const h_in = Math.max(0.0001, parseFloat(document.getElementById('h_in').value) || 50);
+      const h_out = Math.max(0.0001, parseFloat(document.getElementById('h_out').value) || 10);
+      const rho = Math.max(0.1, parseFloat(document.getElementById('density').value) || 1000);
+      const cp = Math.max(0.1, parseFloat(document.getElementById('cp').value) || 4186);
+
+      // resistances (K/W)
+      let R_total = 1/(h_in * A) + 1/(h_out * A);
+      layers.forEach(L => {
+        const t_m = (parseFloat(L.thickness_mm) || 0) / 1000;
+        const k = parseFloat(L.k) || 1e-6;
+        R_total += t_m / (k * A);
+      });
+
+      if(R_total <= 0){ alert('Invalid thermal resistance (R_total). Check inputs.'); return; }
+
+      const UA = 1 / R_total; // W/K
+      const m = Math.max(1e-6, V * rho); // kg
+
+      // analytic solution: T(t) = T_out + (T_in - T_out) * exp(- (UA * t) / (m*cp))
+
+      // hourly (0..24h)
+      const hours = 24;
+      const tempsHour = [];
+      const labelsHour = [];
+      for(let h=0; h<=hours; h++){
+        const tSec = h * 3600;
+        const T = T_out + (T_in - T_out) * Math.exp( - (UA * tSec) / (m * cp) );
+        tempsHour.push(parseFloat(T.toFixed(3)));
+        labelsHour.push(h + 'h');
+      }
+
+      // daily (0..30 days)
+      const days = 30;
+      const tempsDay = [];
+      const labelsDay = [];
+      for(let d=0; d<=days; d++){
+        const tSec = d * 86400;
+        const T = T_out + (T_in - T_out) * Math.exp( - (UA * tSec) / (m * cp) );
+        tempsDay.push(parseFloat(T.toFixed(3)));
+        labelsDay.push(d + 'd');
+      }
+
+      // destroy old charts
+      if(hourChart) hourChart.destroy();
+      if(dayChart) dayChart.destroy();
+
+      // create charts
+      const ctxHour = document.getElementById('hourChart').getContext('2d');
+      hourChart = new Chart(ctxHour, {
+        type: 'line',
+        data: {
+          labels: labelsHour,
+          datasets: [{
+            label: 'Temperature (°C)',
+            data: tempsHour,
+            tension: 0.25,
+            borderWidth: 2,
+            pointRadius: 2
+          }]
+        },
+        options: { responsive:true, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:false } } }
+      });
+
+      const ctxDay = document.getElementById('dayChart').getContext('2d');
+      dayChart = new Chart(ctxDay, {
+        type: 'line',
+        data: {
+          labels: labelsDay,
+          datasets: [{
+            label: 'Temperature (°C)',
+            data: tempsDay,
+            tension: 0.25,
+            borderWidth: 2,
+            pointRadius: 2
+          }]
+        },
+        options: { responsive:true, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:false } } }
+      });
+
+      // summary
+      const Q0 = (T_in - T_out) / R_total; // initial heat loss W
+      const rSummary = document.getElementById('summary');
+      rSummary.innerHTML = `
+        <div class="space-y-1">
+          <div><strong>R<sub>total</sub>:</strong> ${R_total.toFixed(4)} K/W</div>
+          <div><strong>UA (overall):</strong> ${UA.toFixed(3)} W/K</div>
+          <div><strong>Initial heat loss Q₀:</strong> ${Q0.toFixed(2)} W</div>
+          <div><strong>Mass (m):</strong> ${m.toFixed(2)} kg</div>
+        </div>
+      `;
+
+      // save last result for CSV
+      window._lastResult = { inputs: { T_in, T_out, A, V, h_in, h_out, rho, cp }, layers: JSON.parse(JSON.stringify(layers)), R_total, UA, Q0, tempsHour, tempsDay };
+    }
+
+    document.getElementById('calcBtn').addEventListener('click', computeAndPlot);
+
+    // export CSV
+    document.getElementById('exportCsv').addEventListener('click', ()=>{
+      const s = window._lastResult;
+      if(!s){ alert('No result yet. Click Calculate first.'); return; }
+      const rows = [];
+      rows.push(['time,temperature_C']);
+      s.tempsHour.forEach((t,i)=> rows.push([i+'h,'+t]));
+      rows.push(['---']);
+      s.tempsDay.forEach((t,i)=> rows.push([i+'d,'+t]));
+      const csv = rows.map(r=>Array.isArray(r)?r.join(','):r).join('\n');
+      const blob = new Blob([csv], { type:'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href=url; a.download = 'temp_loss.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    });
+
+    document.getElementById('downloadJson').addEventListener('click', ()=>{
+      const s = window._lastResult;
+      if(!s){ alert('No result yet. Click Calculate first.'); return; }
+      const blob = new Blob([JSON.stringify(s, null, 2)], { type:'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href=url; a.download = 'temp_loss.json'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    });
+
+    // small niceties: recalc when pressing Enter in inputs
+    document.querySelectorAll('input').forEach(inp => {
+      inp.addEventListener('keydown', (e)=>{ if(e.key === 'Enter'){ computeAndPlot(); } });
+    });
+
+  </script>
+</body>
+</html>
